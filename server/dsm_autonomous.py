@@ -1,66 +1,87 @@
 #!/usr/bin/env python3
-# File name   : dsm_autonomous_threaded.py
-# Description : Threaded DSM Autonomous Driving with Line, YOLO & Ultrasonic Sensor
-# Author      : seonkeun cho
-# Date        : 2025/09/05
-
 import time
 import threading
 import RPi.GPIO as GPIO
 import move
 from ultralytics import YOLO
-from picamera2 import Picamera2  # 상단에 import 추가
+from picamera2 import Picamera2
+import cv2
+import numpy as np
 
-# ───────────────────────────────────────
-# DSM Autonomous Driving (Threaded)
-# ───────────────────────────────────────
 class DSM_Autonomous:
     def __init__(self, speed=40):
-        # Picamera2 초기화 (저해상도로 속도 향상)
-        picam2 = Picamera2()
-        camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
-        picam2.configure(camera_config)
-        picam2.start()
+        # YOLOv8n 모델 로드
+        self.model = YOLO("yolov8n.pt")
 
-        # 시작/센서 플래그
-        self.started = False            # 출발 조건 만족 여부
-        self.use_ultrasonic = True      # 출발 후 초음파 사용 중지
+        # 카메라 초기화
+        self.picam2 = Picamera2()
+        camera_config = self.picam2.create_preview_configuration(main={"size": (640, 480)})
+        self.picam2.configure(camera_config)
+        self.picam2.start()
 
-        # 출발 관련 설정
-        self.start_threshold = 40.0     # cm, 이 값보다 멀면 '가림막 없음'으로 간주
-        self.required_stable = 5        # 연속 측정 횟수
+        # 실행 플래그
+        self.running = True
+        self.started = False
+        self.use_ultrasonic = True
+        self.speed = speed
 
-        # 센서값 저장소
-        self.distance = 100.0
-        self.line_left = 0
-        self.line_middle = 0
-        self.line_right = 0
-
-        # 라인 센서 핀
-        self.line_pin_right = 19
-        self.line_pin_middle = 16
-        self.line_pin_left = 20
-
-        # 초음파 센서 핀
+        # 초음파 핀
         self.Trig = 11
         self.Echo = 8
 
-        # GPIO 초기화
+        # 출발 관련 설정
+        self.start_threshold = 30.0     # cm, 가림막 없으면 출발
+        self.stable_time = 3.0          # 3초 이상 안정적이면 출발
+
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.line_pin_right, GPIO.IN)
-        GPIO.setup(self.line_pin_middle, GPIO.IN)
-        GPIO.setup(self.line_pin_left, GPIO.IN)
         GPIO.setup(self.Trig, GPIO.OUT, initial=GPIO.LOW)
         GPIO.setup(self.Echo, GPIO.IN)
         move.setup()
 
-        # 출발 대기 스레드만 시작 — 출발 후 라인/YOLO 스레드 시작
+        # 출발 대기 스레드
         threading.Thread(target=self.sensor_start_wait_loop, daemon=True).start()
 
-    # ────────────────────────────────
-    # 초음파 센서 거리 읽기 (타임아웃 추가, cm 반환)
-    # ────────────────────────────────
+    # ───── 프레임 캡처 + 전처리 ─────
+    def capture_frame(self):
+        frame = self.picam2.capture_array()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
+        return frame
+
+    # ───── YOLO 객체 인식 ─────
+    def detect_objects(self, frame):
+        results = self.model(frame, verbose=False)
+        names = results[0].names
+        boxes = results[0].boxes
+        detected = [names[int(cls)] for cls in boxes.cls]
+        return detected, results[0].plot()  # plot()로 박스 그린 이미지 반환
+
+    # ───── 차선 인식 (실선/점선 구분) ─────
+    def detect_lane(self, frame):
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lower_yellow = np.array([20, 100, 100])
+        upper_yellow = np.array([30, 255, 255])
+        mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        edges = cv2.Canny(mask, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=40, maxLineGap=10)
+
+        solid_lines = []
+        dashed_lines = []
+
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                length = np.hypot(x2-x1, y2-y1)
+                # 길이가 길면 실선, 짧으면 점선
+                if length > 60:
+                    solid_lines.append(line)
+                else:
+                    dashed_lines.append(line)
+
+        return solid_lines, dashed_lines
+
+    # ───── 초음파 거리 읽기 ─────
     def read_distance(self):
         try:
             GPIO.output(self.Trig, GPIO.LOW)
@@ -80,146 +101,97 @@ class DSM_Autonomous:
                 if time.time() > timeout:
                     return float('inf')
             t2 = time.time()
-
-            distance_cm = (t2 - t1) * 34000 / 2  # cm
-            self.distance = distance_cm
-            # print("Distance: %.1f cm" % distance_cm)
-            return distance_cm
-        except Exception as e:
-            # 예외시 매우 큰 값으로 처리(가림막 없음으로 판단 방지)
-            print("read_distance error:", e)
+            return (t2 - t1) * 34000 / 2
+        except:
             return float('inf')
 
-    # ────────────────────────────────
-    # 라인 센서 상태 읽기
-    # ────────────────────────────────
-    def read_line_status(self):
-        left = GPIO.input(self.line_pin_left)
-        middle = GPIO.input(self.line_pin_middle)
-        right = GPIO.input(self.line_pin_right)
-        return left, middle, right
-
-    # ────────────────────────────────
-    # 출발 대기 루프: 초음파로 가림막 연속 판정되면 started=True로 바꾸고 라인/YOLO 시작
-    # ────────────────────────────────
+    # ───── 출발 대기 루프 ─────
     def sensor_start_wait_loop(self):
-        stable_count = 0
-        print("🔎 Waiting for start condition (remove obstacle in front)...")
+        print("🔎 Waiting for start condition (remove obstacle for 3s)...")
+        stable_start = None
         while self.running and not self.started:
             if not self.use_ultrasonic:
                 break
             d = self.read_distance()
-            # 초음파가 정상적으로 읽히면 판별
             if d != float('inf') and d > self.start_threshold:
-                stable_count += 1
-                print(f"  start wait: distance={d:.1f}cm ({stable_count}/{self.required_stable})")
+                if stable_start is None:
+                    stable_start = time.time()
+                elif time.time() - stable_start >= self.stable_time:
+                    self.started = True
+                    self.use_ultrasonic = False
+                    print("✅ Start condition met — starting YOLO thread")
+                    threading.Thread(target=self.yolo_lane_loop, daemon=True).start()
+                    break
             else:
-                stable_count = 0
-            if stable_count >= self.required_stable:
-                self.started = True
-                self.use_ultrasonic = False
-                print("✅ Start condition met — starting line & YOLO threads")
-                # 출발 시 라인과 YOLO 루프 시작
-                threading.Thread(target=self.line_loop, daemon=True).start()
-                threading.Thread(target=self.yolo_loop, daemon=True).start()
-                break
+                stable_start = None
             time.sleep(0.1)
 
-    # ────────────────────────────────
-    # 라인 센서 기반 주행 루프 (초음파는 출발 후 사용하지 않음)
-    # ────────────────────────────────
-    def line_loop(self):
-        while self.running:
-            left, middle, right = self.read_line_status()
-            self.line_left = left
-            self.line_middle = middle
-            self.line_right = right
-
-            print('Line Sensor - L:%d M:%d R:%d | started:%s' %
-                  (left, middle, right, str(self.started)))
-
-            # 순수 라인 센서 기반 주행
-            if left != 1:
-                move.move(self.speed, 'no', 'right', 0)
-            elif right != 1:
-                move.move(self.speed, 'no', 'left', 0)
-            else:
-                move.move(self.speed, 'forward', 'no', 0)
-
-            time.sleep(0.05)
-
-    # ────────────────────────────────
-    # YOLO 기반 장애물 감지 (proximity 플래그로 라인 루프에 알림)
-    # ────────────────────────────────
-    def yolo_loop(self):
+    # ───── YOLO + 차선 기반 주행 루프 ─────
+    def yolo_lane_loop(self):
         frame_count = 0
         start_time = time.time()
 
         while self.running:
-            frame = self.picam2.capture_array()  # 미리 초기화된 카메라 사용
+            frame = self.capture_frame()
             frame_count += 1
 
-            # YOLO 추론 (3프레임마다 1번씩 → 속도 ↑)
             if frame_count % 3 == 0:
                 try:
-                    results = self.model(frame, verbose=False)
-                    names = results[0].names
-                    boxes = results[0].boxes
+                    detected, annotated_frame = self.detect_objects(frame)
+                    solid_lines, dashed_lines = self.detect_lane(frame)
 
-                    detected = [names[int(cls)] for cls in boxes.cls]
-                    print("Detected:", detected)
-
-                    # 감지된 객체에 따른 동작
+                    # YOLO 장애물 회피
                     if "person" in detected:
-                        print("👀 Person detected → stop for 1s")
+                        print("👀 Person detected → stop 1s")
                         move.motorStop()
                         time.sleep(1.0)
-                    elif "car" in detected:
-                        print("🚗 Car detected → turn left for 1s")
-                        move.move(self.speed, 'no', 'left', 0)
-                        time.sleep(1.0)
+                        continue
+
+                    # 차선 변경 판단
+                    lane_move = 'forward'
+                    if dashed_lines:
+                        # 예: 가장 왼쪽/오른쪽 점선 기준 좌/우 이동
+                        avg_x = np.mean([ (line[0][0]+line[0][2])/2 for line in dashed_lines ])
+                        if avg_x < 320 - 30:
+                            lane_move = 'left'
+                        elif avg_x > 320 + 30:
+                            lane_move = 'right'
+
+                    move.move(self.speed,
+                              lane_move if lane_move in ['left','right'] else 'forward',
+                              'no', 0)
+
+                    print(f"Detected: {detected} | Solid:{len(solid_lines)} Dashed:{len(dashed_lines)} | Move:{lane_move}")
 
                 except Exception as e:
-                    print("YOLO error:", e)
-                    time.sleep(0.1)
-                    continue
+                    print("Error:", e)
 
-            # FPS 출력
+            # FPS 출력 최적화: 1초마다 한 번
             if frame_count % 30 == 0:
-                end_time = time.time()
-                fps = frame_count / (end_time - start_time)
+                fps = frame_count / (time.time() - start_time)
                 print(f"📷 FPS: {fps:.2f}")
                 frame_count = 0
                 start_time = time.time()
 
             time.sleep(0.05)
 
-    # ────────────────────────────────
-    # 실행
-    # ────────────────────────────────
+    # ───── 실행 / 종료 ─────
     def run(self):
         print("🚗 DSM Autonomous Driving Initialized — waiting for start")
         try:
             while self.running:
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            print("\n⛔ Interrupted by User")
             self.stop()
 
-    # ────────────────────────────────
-    # 종료
-    # ────────────────────────────────
     def stop(self):
         self.running = False
         move.motorStop()
-        self.picam2.stop()  # 카메라 정리 추가
+        self.picam2.stop()
         GPIO.cleanup()
         print("🛑 DSM Autonomous Driving Stopped")
 
 
-# ───────────────────────────────────────
-# 실행 진입점
-# ───────────────────────────────────────
 if __name__ == '__main__':
     auto = DSM_Autonomous(speed=40)
     auto.run()
