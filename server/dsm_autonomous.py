@@ -33,6 +33,9 @@ class DSM_Autonomous:
         self.start_threshold = 30.0     # cm, 가림막 없으면 출발
         self.stable_time = 3.0          # 3초 이상 안정적이면 출발
 
+        # 기본 진행 방향
+        self.current_direction = "no"  
+
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(self.Trig, GPIO.OUT, initial=GPIO.LOW)
@@ -121,10 +124,17 @@ class DSM_Autonomous:
                     self.use_ultrasonic = False
                     print("✅ Start condition met — starting YOLO thread")
                     threading.Thread(target=self.yolo_lane_loop, daemon=True).start()
+                    threading.Thread(target=self.motor_loop, daemon=True).start()
                     break
             else:
                 stable_start = None
             time.sleep(0.1)
+
+    # ───── 모터 구동 루프 ─────
+    def motor_loop(self):
+        while self.running:
+            move.move(self.speed, self.current_direction, "no", 0)
+            time.sleep(0.05)  # 모터 제어 주기
 
     # ───── YOLO + 차선 기반 주행 루프 ─────
     def yolo_lane_loop(self):
@@ -143,8 +153,7 @@ class DSM_Autonomous:
                     # YOLO 장애물 회피
                     if "person" in detected:
                         print("👀 Person detected → stop 1s")
-                        move.motorStop()
-                        time.sleep(1.0)
+                        self.current_direction = "no"
                         continue
 
                     # 차선 변경 판단
@@ -157,10 +166,8 @@ class DSM_Autonomous:
                         elif avg_x > 320 + 30:
                             lane_move = 'right'
 
-                    move.move(self.speed,
-                              lane_move if lane_move in ['left','right'] else 'forward',
-                              'no', 0)
-
+                    # 모터에 전달할 방향 업데이트
+                    self.current_direction = lane_move
                     print(f"Detected: {detected} | Solid:{len(solid_lines)} Dashed:{len(dashed_lines)} | Move:{lane_move}")
 
                 except Exception as e:
