@@ -18,7 +18,7 @@ class DSM_Autonomous:
 
         # 카메라 초기화
         self.picam2 = Picamera2()
-        camera_config = self.picam2.create_preview_configuration(main={"size": (640, 480)})
+        camera_config = self.picam2.create_preview_configuration(main={"size": (320, 240)})
         self.picam2.configure(camera_config)
         self.picam2.start()
 
@@ -53,8 +53,8 @@ class DSM_Autonomous:
         threading.Thread(target=self.sensor_start_wait_loop, daemon=True).start()
 
     # ───── 비디오 저장 초기화 ─────
-    def init_video_writer(self, filename, fps=20.0, size=(640, 480)):
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    def init_video_writer(self, filename, fps=30.0, size=(320, 240)):
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
         self.out = cv2.VideoWriter(filename, fourcc, fps, size)
         print(f"🎥 Recording started: {filename}")
 
@@ -160,66 +160,18 @@ class DSM_Autonomous:
                     self.started = True
                     self.use_ultrasonic = False
                     print("✅ Start condition met — starting YOLO thread")
-                    threading.Thread(target=self.yolo_lane_loop, daemon=True).start()
+                    threading.Thread(target=self.camera_record_loop, daemon=True).start()
                     break
             else:
                 stable_start = None
             time.sleep(0.1)
 
-    # ───── YOLO + 차선 기반 주행 루프 ─────
-    def yolo_lane_loop(self):
-        frame_count = 0
-        start_time = time.time()
-
+    # ───── 주행녹화 루프 ─────
+    def camera_record_loop(self):
         while self.running:
             frame = self.capture_frame()
-            frame_count += 1
-
-            if frame_count % 3 == 0:
-                try:
-                    detected, annotated_frame = self.detect_objects(frame)
-                    solid_lines, dashed_lines = self.detect_lane(frame)
-
-                    # 차선 주석 추가
-                    annotated_frame = self.draw_lanes(annotated_frame, solid_lines, dashed_lines)
-
-                    # YOLO 장애물 회피
-                    if "person" in detected:
-                        print("👀 Person detected → stop 1s")
-                        move.motorStop()
-                        time.sleep(1.0)
-                        self.write_frame(annotated_frame)
-                        continue
-
-                    # 차선 변경 판단
-                    lane_move = 'forward'
-                    if dashed_lines:
-                        avg_x = np.mean([(line[0][0]+line[0][2])/2 for line in dashed_lines])
-                        if avg_x < 320 - 30:
-                            lane_move = 'left'
-                        elif avg_x > 320 + 30:
-                            lane_move = 'right'
-
-                    move.move(self.speed,
-                              lane_move if lane_move in ['left','right'] else 'forward',
-                              'no', 0)
-
-                    print(f"Detected: {detected} | Solid:{len(solid_lines)} Dashed:{len(dashed_lines)} | Move:{lane_move}")
-
-                    # 프레임 저장
-                    self.write_frame(annotated_frame)
-
-                except Exception as e:
-                    print("Error:", e)
-
-            # FPS 출력 최적화
-            if frame_count % 30 == 0:
-                fps = frame_count / (time.time() - start_time)
-                print(f"📷 FPS: {fps:.2f}")
-                frame_count = 0
-                start_time = time.time()
-
-            time.sleep(0.05)
+            self.write_frame(frame)
+            time.sleep(0.03)
 
     # ───── 실행 / 종료 ─────
     def run(self):
