@@ -49,6 +49,9 @@ class DSM_Autonomous:
         self.out = None
         self.init_video_writer(os.path.join(parent_dir, f"drive_record_{date_str}.avi"))
 
+        # 주석된 프레임 저장용
+        self.annotated_frame = None
+
         # 출발 대기 스레드
         threading.Thread(target=self.sensor_start_wait_loop, daemon=True).start()
 
@@ -83,6 +86,10 @@ class DSM_Autonomous:
         names = results[0].names
         boxes = results[0].boxes
         detected = [names[int(cls)] for cls in boxes.cls]
+
+        if detected:
+            print(f"🟥 Detected objects: {detected}")
+            
         return detected, results[0].plot()  # 박스가 그려진 annotated_frame 반환
 
     # ───── 차선 인식 (실선/점선 구분) ─────
@@ -161,6 +168,7 @@ class DSM_Autonomous:
                     self.use_ultrasonic = False
                     print("✅ Start condition met — starting YOLO thread")
                     threading.Thread(target=self.camera_record_loop, daemon=True).start()
+                    threading.Thread(target=self.detection_loop, daemon=True).start()
                     break
             else:
                 stable_start = None
@@ -170,8 +178,33 @@ class DSM_Autonomous:
     def camera_record_loop(self):
         while self.running:
             frame = self.capture_frame()
-            self.write_frame(frame)
-            time.sleep(0.03)
+
+            # 최신 주석된 프레임 있으면 저장, 아니면 원본 저장
+            if self.annotated_frame is not None:
+                self.write_frame(self.annotated_frame)
+                self.annotated_frame = None  # 사용 후 초기화
+            else:
+                self.write_frame(frame)
+
+        time.sleep(0.03)
+
+    # ───── 차선 + 객체 인식 루프 (2fps) ─────
+    def detection_loop(self):
+        print("🟪 Combined detection loop started (2fps)")
+        while self.running:
+            frame = self.capture_frame()
+
+            # 차선 감지
+            solid_lines, dashed_lines = self.detect_lane(frame)
+            lane_annotated = self.draw_lanes(frame.copy(), solid_lines, dashed_lines)
+
+            # 객체 인식
+            _, final_annotated = self.detect_objects(lane_annotated)
+
+            # 최종 주석된 프레임 저장
+            self.annotated_frame = final_annotated
+
+            time.sleep(0.5)  # 2fps 간격
 
     # ───── 실행 / 종료 ─────
     def run(self):
