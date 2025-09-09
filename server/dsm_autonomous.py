@@ -7,6 +7,8 @@ from ultralytics import YOLO
 from picamera2 import Picamera2
 import cv2
 import numpy as np
+import os
+import datetime  # datetime 모듈 추가
 
 
 class DSM_Autonomous:
@@ -41,8 +43,11 @@ class DSM_Autonomous:
         move.setup()
 
         # 비디오 저장 초기화
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")  # 현재 날짜와 시간
         self.out = None
-        self.init_video_writer("/home/pi/drive_record.avi")
+        self.init_video_writer(os.path.join(parent_dir, f"drive_record_{date_str}.avi"))
 
         # 출발 대기 스레드
         threading.Thread(target=self.sensor_start_wait_loop, daemon=True).start()
