@@ -223,12 +223,22 @@ class DSM_Autonomous:
             while self.running:
                 time.sleep(0.1)
         except KeyboardInterrupt:
+            print("\n🛑 Ctrl+C detected! Stopping DSM Autonomous...")
             self.stop()
+        except Exception as e:
+            print(f"⚠️ Unexpected error: {e}")
+            self.stop()
+        finally:
+            print("✅ Program exited cleanly.")
 
     def stop(self):
         self.running = False
         move.motorStop()
-        self.picam2.stop()
+        if self.picam2:
+            try:
+                self.picam2.stop()
+            except Exception as e:
+                print(f"⚠️ Error stopping camera: {e}")
         self.release_video_writer()
         GPIO.cleanup()
         print("🛑 DSM Autonomous Driving Stopped")
