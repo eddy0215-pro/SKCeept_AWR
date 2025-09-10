@@ -11,3 +11,6 @@ __pycache__/
 # 기타 OS 관련 불필요 파일
 .DS_Store
 Thumbs.db
+*.avi
+*.mp4
+*.h264

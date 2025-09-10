@@ -7,6 +7,9 @@ from ultralytics import YOLO
 from picamera2 import Picamera2
 import cv2
 import numpy as np
+import os
+import datetime  # datetime 모듈 추가
+
 
 class DSM_Autonomous:
     def __init__(self, speed=40):
@@ -15,7 +18,7 @@ class DSM_Autonomous:
 
         # 카메라 초기화
         self.picam2 = Picamera2()
-        camera_config = self.picam2.create_preview_configuration(main={"size": (640, 480)})
+        camera_config = self.picam2.create_preview_configuration(main={"size": (320, 240)})
         self.picam2.configure(camera_config)
         self.picam2.start()
 
@@ -42,8 +45,36 @@ class DSM_Autonomous:
         GPIO.setup(self.Echo, GPIO.IN)
         move.setup()
 
+        # 비디오 저장 초기화
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")  # 현재 날짜와 시간
+        self.out = None
+        self.init_video_writer(os.path.join(parent_dir, f"drive_record_{date_str}.avi"))
+
+        # 주석된 프레임 저장용
+        self.annotated_frame = None
+
         # 출발 대기 스레드
         threading.Thread(target=self.sensor_start_wait_loop, daemon=True).start()
+
+    # ───── 비디오 저장 초기화 ─────
+    def init_video_writer(self, filename, fps=30.0, size=(320, 240)):
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        self.out = cv2.VideoWriter(filename, fourcc, fps, size)
+        print(f"🎥 Recording started: {filename}")
+
+    # ───── 프레임 저장 ─────
+    def write_frame(self, frame):
+        if self.out is not None:
+            self.out.write(frame)
+
+    # ───── 비디오 저장 종료 ─────
+    def release_video_writer(self):
+        if self.out is not None:
+            self.out.release()
+            self.out = None
+            print("💾 Video recording stopped and file saved.")
 
     # ───── 프레임 캡처 + 전처리 ─────
     def capture_frame(self):
@@ -58,7 +89,11 @@ class DSM_Autonomous:
         names = results[0].names
         boxes = results[0].boxes
         detected = [names[int(cls)] for cls in boxes.cls]
-        return detected, results[0].plot()  # plot()로 박스 그린 이미지 반환
+
+        if detected:
+            print(f"🟥 Detected objects: {detected}")
+            
+        return detected, results[0].plot()  # 박스가 그려진 annotated_frame 반환
 
     # ───── 차선 인식 (실선/점선 구분) ─────
     def detect_lane(self, frame):
@@ -83,6 +118,18 @@ class DSM_Autonomous:
                     dashed_lines.append(line)
 
         return solid_lines, dashed_lines
+
+    # ───── 차선 주석 그리기 ─────
+    def draw_lanes(self, frame, solid_lines, dashed_lines):
+        if solid_lines:
+            for line in solid_lines:
+                x1, y1, x2, y2 = line[0]
+                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)  # 초록색 = 실선
+        if dashed_lines:
+            for line in dashed_lines:
+                x1, y1, x2, y2 = line[0]
+                cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)  # 파랑 = 점선
+        return frame
 
     # ───── 초음파 거리 읽기 ─────
     def read_distance(self):
@@ -135,8 +182,8 @@ class DSM_Autonomous:
         while self.running:
             move.move(self.speed, self.current_direction, "no", 0)
             time.sleep(0.05)  # 모터 제어 주기
-
-    # ───── YOLO + 차선 기반 주행 루프 ─────
+            
+# ───── YOLO + 차선 기반 주행 루프 ─────
     def yolo_lane_loop(self):
         frame_count = 0
         start_time = time.time()
@@ -189,12 +236,23 @@ class DSM_Autonomous:
             while self.running:
                 time.sleep(0.1)
         except KeyboardInterrupt:
+            print("\n🛑 Ctrl+C detected! Stopping DSM Autonomous...")
             self.stop()
+        except Exception as e:
+            print(f"⚠️ Unexpected error: {e}")
+            self.stop()
+        finally:
+            print("✅ Program exited cleanly.")
 
     def stop(self):
         self.running = False
         move.motorStop()
-        self.picam2.stop()
+        if self.picam2:
+            try:
+                self.picam2.stop()
+            except Exception as e:
+                print(f"⚠️ Error stopping camera: {e}")
+        self.release_video_writer()
         GPIO.cleanup()
         print("🛑 DSM Autonomous Driving Stopped")
 
