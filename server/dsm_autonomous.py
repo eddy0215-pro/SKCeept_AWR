@@ -10,7 +10,6 @@ import numpy as np
 import os
 import datetime  # datetime 모듈 추가
 
-
 class DSM_Autonomous:
     def __init__(self, speed=40):
         # YOLOv8n 모델 로드
@@ -27,6 +26,9 @@ class DSM_Autonomous:
         self.started = False
         self.use_ultrasonic = True
         self.speed = speed
+
+        # 출력 모드 설정 ("fb", "video", "both")
+        self.outputmode = "fb"
 
         # 초음파 핀
         self.Trig = 11
@@ -46,11 +48,12 @@ class DSM_Autonomous:
         move.setup()
 
         # 비디오 저장 초기화
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")  # 현재 날짜와 시간
-        self.out = None
-        self.init_video_writer(os.path.join(parent_dir, f"drive_record_{date_str}.avi"))
+        if self.outputmode == "video":
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            self.out = None
+            self.init_video_writer(os.path.join(parent_dir, f"drive_record_{date_str}.avi"))
 
         # 주석된 프레임 저장용
         self.annotated_frame = None
@@ -64,24 +67,70 @@ class DSM_Autonomous:
         self.out = cv2.VideoWriter(filename, fourcc, fps, size)
         print(f"🎥 Recording started: {filename}")
 
-    # ───── 프레임 저장 ─────
     def write_frame(self, frame):
         if self.out is not None:
             self.out.write(frame)
 
-    # ───── 비디오 저장 종료 ─────
     def release_video_writer(self):
         if self.out is not None:
             self.out.release()
             self.out = None
             print("💾 Video recording stopped and file saved.")
 
-    # ───── 프레임 캡처 + 전처리 ─────
+    # ───── 프레임 캡처 + FB 출력 (320x240, RGB565) ─────
     def capture_frame(self):
+        # 1. 프레임 캡처
         frame = self.picam2.capture_array()
+        if frame is None:
+            print("Warning: frame capture failed")
+            return None
+
+        # 2. BGRA → BGR
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+        # 3. 180도 회전
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-        return frame
+
+        # 4. 출력 모드에 따른 처리
+        if self.outputmode == "video":
+            # 파일 저장 모드 → 단순히 frame 반환 (VideoWriter가 따로 처리)
+            return frame
+
+        elif self.outputmode == "fb":
+            # 원하는 크기로 축소 (예: 320x240)
+            small_w, small_h = 320, 240
+            frame_small = cv2.resize(frame, (small_w, small_h))
+
+            # BGR → RGB565 변환
+            frame_rgb565 = cv2.cvtColor(frame_small, cv2.COLOR_BGR2BGR565)
+
+            # FB 정보
+            fb_width, fb_height = 1920, 1080
+            bpp = 2
+            line_length = fb_width * bpp
+
+            # 중앙 배치 offset 계산
+            x_offset = (fb_width - small_w) // 2
+            y_offset = (fb_height - small_h) // 2
+
+            try:
+                with open("/dev/fb0", "r+b") as f:
+                    for row in range(small_h):
+                        offset = ((y_offset + row) * line_length) + (x_offset * bpp)
+                        f.seek(offset)
+                        f.write(frame_rgb565[row].tobytes())
+            except Exception as e:
+                print(f"FB 출력 실패: {e}")
+
+            return frame  # 원본 frame 반환해서 후속 처리에도 사용 가능
+
+        elif self.outputmode == "none":
+            # 아무것도 안 하고 frame만 반환
+            return frame
+
+        else:
+            print(f"Unknown output mode: {self.outputmode}")
+            return frame
 
     # ───── YOLO 객체 인식 ─────
     def detect_objects(self, frame):
@@ -95,43 +144,73 @@ class DSM_Autonomous:
             
         return detected, results[0].plot()  # 박스가 그려진 annotated_frame 반환
 
-    # ───── 차선 인식 (실선/점선 구분) ─────
-    def detect_lane(self, frame):
+    # ───── 왼쪽 노란 실선만 인식 ─────
+    def detect_left_yellow_lane(self, frame):
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # 노란색 범위
         lower_yellow = np.array([20, 100, 100])
         upper_yellow = np.array([30, 255, 255])
         mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-        edges = cv2.Canny(mask, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=40, maxLineGap=10)
+
+        # ROI: 상단 절반 + 왼쪽 절반
+        height, width = frame.shape[:2]
+        roi = mask[:int(height/2), :int(width/2)]
+
+        # 모폴로지
+        kernel = np.ones((5, 5), np.uint8)
+        roi_clean = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, kernel)
+
+        # 에지 검출
+        edges = cv2.Canny(roi_clean, 50, 150)
+
+        # 허프 변환 → 긴 선분만
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50,
+                                minLineLength=60, maxLineGap=20)
 
         solid_lines = []
-        dashed_lines = []
+        points = []
 
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
                 length = np.hypot(x2-x1, y2-y1)
-                # 길이가 길면 실선, 짧으면 점선
                 if length > 60:
                     solid_lines.append(line)
-                else:
-                    dashed_lines.append(line)
+                    points.append((x1, y1))
+                    points.append((x2, y2))
 
-        return solid_lines, dashed_lines
+        # Polynomial Fitting
+        curve = None
+        if len(points) > 0:
+            pts = np.array(points)
+            x = pts[:, 0]
+            y = pts[:, 1]
+            sort_idx = np.argsort(y)
+            x = x[sort_idx]
+            y = y[sort_idx]
 
-    # ───── 차선 주석 그리기 ─────
-    def draw_lanes(self, frame, solid_lines, dashed_lines):
-        if solid_lines:
-            for line in solid_lines:
-                x1, y1, x2, y2 = line[0]
-                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)  # 초록색 = 실선
-        if dashed_lines:
-            for line in dashed_lines:
-                x1, y1, x2, y2 = line[0]
-                cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)  # 파랑 = 점선
+            coeffs = np.polyfit(y, x, 2)
+            poly = np.poly1d(coeffs)
+
+            y_new = np.linspace(min(y), max(y), num=50, dtype=int)
+            x_new = poly(y_new).astype(int)
+
+            curve = list(zip(x_new, y_new))
+
+        return solid_lines, curve, roi_clean, edges
+
+    # ───── 차선 주석 ─────
+    def draw_left_lane(self, frame, solid_lines, curve):
+        for line in solid_lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        if curve is not None:
+            for i in range(len(curve)-1):
+                cv2.line(frame, curve[i], curve[i+1], (0, 0, 255), 2)
         return frame
 
-    # ───── 초음파 거리 읽기 ─────
+    # ───── 초음파 거리 ─────
     def read_distance(self):
         try:
             GPIO.output(self.Trig, GPIO.LOW)
@@ -177,13 +256,13 @@ class DSM_Autonomous:
                 stable_start = None
             time.sleep(0.1)
 
-    # ───── 모터 구동 루프 ─────
+    # ───── 모터 루프 ─────
     def motor_loop(self):
         while self.running:
             move.move(self.speed, self.current_direction, "no", 0)
-            time.sleep(0.05)  # 모터 제어 주기
-            
-# ───── YOLO + 차선 기반 주행 루프 ─────
+            time.sleep(0.05)
+
+    # ───── YOLO + 차선 주행 ─────
     def yolo_lane_loop(self):
         frame_count = 0
         start_time = time.time()
@@ -194,39 +273,32 @@ class DSM_Autonomous:
 
             if frame_count % 3 == 0:
                 try:
-                    detected, annotated_frame = self.detect_objects(frame)
-                    solid_lines, dashed_lines = self.detect_lane(frame)
+                    detected, annotated = self.detect_objects(frame)
+                    solid_lines, curve, roi_clean, edges = self.detect_left_yellow_lane(frame)
+                    frame = self.draw_left_lane(frame, solid_lines, curve)
 
-                    # YOLO 장애물 회피
+                    # 객체 감지 → 보행자 멈춤
                     if "person" in detected:
                         print("👀 Person detected → stop 1s")
                         self.current_direction = "no"
                         continue
 
-                    # 차선 변경 판단
+                    # 기본 주행: 전진
                     lane_move = 'forward'
-                    if dashed_lines:
-                        # 예: 가장 왼쪽/오른쪽 점선 기준 좌/우 이동
-                        avg_x = np.mean([ (line[0][0]+line[0][2])/2 for line in dashed_lines ])
-                        if avg_x < 320 - 30:
-                            lane_move = 'left'
-                        elif avg_x > 320 + 30:
-                            lane_move = 'right'
-
-                    # 모터에 전달할 방향 업데이트
                     self.current_direction = lane_move
-                    print(f"Detected: {detected} | Solid:{len(solid_lines)} Dashed:{len(dashed_lines)} | Move:{lane_move}")
+
+                    print(f"Detected:{detected} | Solid:{len(solid_lines)} | Move:{lane_move}")
 
                 except Exception as e:
                     print("Error:", e)
 
-            # FPS 출력 최적화: 1초마다 한 번
+            """
             if frame_count % 30 == 0:
                 fps = frame_count / (time.time() - start_time)
                 print(f"📷 FPS: {fps:.2f}")
                 frame_count = 0
                 start_time = time.time()
-
+            """
             time.sleep(0.05)
 
     # ───── 실행 / 종료 ─────
@@ -255,7 +327,6 @@ class DSM_Autonomous:
         self.release_video_writer()
         GPIO.cleanup()
         print("🛑 DSM Autonomous Driving Stopped")
-
 
 if __name__ == '__main__':
     auto = DSM_Autonomous(speed=40)
