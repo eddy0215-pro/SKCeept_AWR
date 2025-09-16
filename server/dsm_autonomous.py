@@ -28,7 +28,7 @@ class DSM_Autonomous:
         self.speed = speed
 
         # 출력 모드 설정 ("fb", "video", "both")
-        self.outputmode = "fb"
+        self.outputmode = "video"
 
         # 초음파 핀
         self.Trig = 11
