@@ -221,27 +221,23 @@ class DSM_Autonomous:
     def camera_record_loop(self):
         while self.running:
             frame = self.capture_frame()
+
+            # 오버레이: YOLO 결과가 있으면 합성
+            if self.annotated_frame is not None:
+                frame = cv2.addWeighted(frame, 0.7, self.annotated_frame, 0.3, 0)
+            
             if self.outputmode == "video":
-                # 최신 주석된 프레임 있으면 저장, 아니면 원본 저장
-                if self.annotated_frame is not None:
-                    self.write_frame(self.annotated_frame)
-                    self.annotated_frame = None  # 사용 후 초기화
-                else:
-                    self.write_frame(frame)
+                self.write_frame(frame)
+
             elif self.outputmode == "fb":
-                # 원하는 크기로 축소 (예: 320x240)
                 small_w, small_h = 320, 240
                 frame_small = cv2.resize(frame, (small_w, small_h))
-
-                # BGR → RGB565 변환
                 frame_rgb565 = cv2.cvtColor(frame_small, cv2.COLOR_BGR2BGR565)
 
-                # FB 정보
                 fb_width, fb_height = 1920, 1080
                 bpp = 2
                 line_length = fb_width * bpp
 
-                # 중앙 배치 offset 계산
                 x_offset = (fb_width - small_w) // 2
                 y_offset = (fb_height - small_h) // 2
 
@@ -254,7 +250,7 @@ class DSM_Autonomous:
                 except Exception as e:
                     print(f"FB 출력 실패: {e}")
 
-        time.sleep(0.03)
+            time.sleep(1/30)  # 30fps 유지
 
     # ───── 모터 루프 ─────
     def motor_loop(self):
@@ -262,14 +258,20 @@ class DSM_Autonomous:
             move.move(self.speed, self.current_direction, "no", 0)
             time.sleep(0.05)
 
-    # ───── YOLO + 차선 주행 ─────
+        # ───── YOLO + 차선 주행 ─────
     def yolo_lane_loop(self):
         while self.running:
             frame = self.capture_frame()
 
+            # YOLO 객체 감지
             detected, annotated = self.detect_objects(frame)
-            solid_lines, curve, roi_clean, edges = self.detect_left_yellow_lane(frame)
-            frame = self.draw_left_lane(frame, solid_lines, curve)
+
+            # 차선 검출 → annotated 프레임 위에 덧그리기
+            solid_lines, curve, roi_clean, edges = self.detect_left_yellow_lane(annotated)
+            final_frame = self.draw_left_lane(annotated, solid_lines, curve)
+
+            # 최신 주석 프레임 저장 (video나 fb 출력 루프에서 사용)
+            self.annotated_frame = final_frame
 
             # 객체 감지 → 보행자 멈춤
             if "person" in detected:
@@ -283,7 +285,7 @@ class DSM_Autonomous:
 
             print(f"Detected:{detected} | Solid:{len(solid_lines)} | Move:{lane_move}")
 
-            time.sleep(1/2)
+            time.sleep(1/3)
 
     # ───── 실행 / 종료 ─────
     def run(self):
@@ -308,7 +310,7 @@ class DSM_Autonomous:
                 self.picam2.stop()
             except Exception as e:
                 print(f"⚠️ Error stopping camera: {e}")
-                
+
         if self.outputmode == "video":
             self.release_video_writer()
         GPIO.cleanup()
