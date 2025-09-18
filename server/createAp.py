@@ -1,7 +1,7 @@
 import os
 import re
 import netifaces
-import time
+from wled import wled  # 모듈에서 클래스 가져오기
 
 def ap_thread():
     # wlan0의 MAC 주소 가져오기
@@ -14,5 +14,11 @@ def ap_thread():
     ssid_name = f"Groovy{mac_suffix}"
     os.system(f"sudo create_ap --no-virt wlan0 eth0 {ssid_name} dsm12345")
 
-if __name__ == "__main__":
-    ap_thread()
+# 간단 테스트
+if __name__ == '__main__':
+    led = wled()
+    try:
+        led.all_white()
+        ap_thread()
+    except KeyboardInterrupt:
+        led.all_off()
