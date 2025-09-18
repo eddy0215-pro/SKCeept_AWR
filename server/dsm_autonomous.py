@@ -28,7 +28,7 @@ class DSM_Autonomous:
         self.speed = speed
 
         # 출력 모드 설정 ("fb", "video", "both")
-        self.outputmode = "video"
+        self.outputmode = "fb"
 
         # 초음파 핀
         self.Trig = 11
@@ -90,47 +90,7 @@ class DSM_Autonomous:
 
         # 3. 180도 회전
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-
-        # 4. 출력 모드에 따른 처리
-        if self.outputmode == "video":
-            # 파일 저장 모드 → 단순히 frame 반환 (VideoWriter가 따로 처리)
-            return frame
-
-        elif self.outputmode == "fb":
-            # 원하는 크기로 축소 (예: 320x240)
-            small_w, small_h = 320, 240
-            frame_small = cv2.resize(frame, (small_w, small_h))
-
-            # BGR → RGB565 변환
-            frame_rgb565 = cv2.cvtColor(frame_small, cv2.COLOR_BGR2BGR565)
-
-            # FB 정보
-            fb_width, fb_height = 1920, 1080
-            bpp = 2
-            line_length = fb_width * bpp
-
-            # 중앙 배치 offset 계산
-            x_offset = (fb_width - small_w) // 2
-            y_offset = (fb_height - small_h) // 2
-
-            try:
-                with open("/dev/fb0", "r+b") as f:
-                    for row in range(small_h):
-                        offset = ((y_offset + row) * line_length) + (x_offset * bpp)
-                        f.seek(offset)
-                        f.write(frame_rgb565[row].tobytes())
-            except Exception as e:
-                print(f"FB 출력 실패: {e}")
-
-            return frame  # 원본 frame 반환해서 후속 처리에도 사용 가능
-
-        elif self.outputmode == "none":
-            # 아무것도 안 하고 frame만 반환
-            return frame
-
-        else:
-            print(f"Unknown output mode: {self.outputmode}")
-            return frame
+        return frame
 
     # ───── YOLO 객체 인식 ─────
     def detect_objects(self, frame):
@@ -249,12 +209,52 @@ class DSM_Autonomous:
                     self.started = True
                     self.use_ultrasonic = False
                     print("✅ Start condition met — starting YOLO thread")
+                    threading.Thread(target=self.camera_record_loop, daemon=True).start()
                     threading.Thread(target=self.yolo_lane_loop, daemon=True).start()
                     threading.Thread(target=self.motor_loop, daemon=True).start()
                     break
             else:
                 stable_start = None
             time.sleep(0.1)
+
+    # ───── 주행녹화 루프 ─────
+    def camera_record_loop(self):
+        while self.running:
+            frame = self.capture_frame()
+            if self.outputmode == "video":
+                # 최신 주석된 프레임 있으면 저장, 아니면 원본 저장
+                if self.annotated_frame is not None:
+                    self.write_frame(self.annotated_frame)
+                    self.annotated_frame = None  # 사용 후 초기화
+                else:
+                    self.write_frame(frame)
+            elif self.outputmode == "fb":
+                # 원하는 크기로 축소 (예: 320x240)
+                small_w, small_h = 320, 240
+                frame_small = cv2.resize(frame, (small_w, small_h))
+
+                # BGR → RGB565 변환
+                frame_rgb565 = cv2.cvtColor(frame_small, cv2.COLOR_BGR2BGR565)
+
+                # FB 정보
+                fb_width, fb_height = 1920, 1080
+                bpp = 2
+                line_length = fb_width * bpp
+
+                # 중앙 배치 offset 계산
+                x_offset = (fb_width - small_w) // 2
+                y_offset = (fb_height - small_h) // 2
+
+                try:
+                    with open("/dev/fb0", "r+b") as f:
+                        for row in range(small_h):
+                            offset = ((y_offset + row) * line_length) + (x_offset * bpp)
+                            f.seek(offset)
+                            f.write(frame_rgb565[row].tobytes())
+                except Exception as e:
+                    print(f"FB 출력 실패: {e}")
+
+        time.sleep(0.03)
 
     # ───── 모터 루프 ─────
     def motor_loop(self):
@@ -264,42 +264,26 @@ class DSM_Autonomous:
 
     # ───── YOLO + 차선 주행 ─────
     def yolo_lane_loop(self):
-        frame_count = 0
-        start_time = time.time()
-
         while self.running:
             frame = self.capture_frame()
-            frame_count += 1
 
-            if frame_count % 3 == 0:
-                try:
-                    detected, annotated = self.detect_objects(frame)
-                    solid_lines, curve, roi_clean, edges = self.detect_left_yellow_lane(frame)
-                    frame = self.draw_left_lane(frame, solid_lines, curve)
+            detected, annotated = self.detect_objects(frame)
+            solid_lines, curve, roi_clean, edges = self.detect_left_yellow_lane(frame)
+            frame = self.draw_left_lane(frame, solid_lines, curve)
 
-                    # 객체 감지 → 보행자 멈춤
-                    if "person" in detected:
-                        print("👀 Person detected → stop 1s")
-                        self.current_direction = "no"
-                        continue
+            # 객체 감지 → 보행자 멈춤
+            if "person" in detected:
+                print("👀 Person detected → stop 1s")
+                self.current_direction = "no"
+                continue
 
-                    # 기본 주행: 전진
-                    lane_move = 'forward'
-                    self.current_direction = lane_move
+            # 기본 주행: 전진
+            lane_move = 'forward'
+            self.current_direction = lane_move
 
-                    print(f"Detected:{detected} | Solid:{len(solid_lines)} | Move:{lane_move}")
+            print(f"Detected:{detected} | Solid:{len(solid_lines)} | Move:{lane_move}")
 
-                except Exception as e:
-                    print("Error:", e)
-
-            """
-            if frame_count % 30 == 0:
-                fps = frame_count / (time.time() - start_time)
-                print(f"📷 FPS: {fps:.2f}")
-                frame_count = 0
-                start_time = time.time()
-            """
-            time.sleep(0.05)
+            time.sleep(1/2)
 
     # ───── 실행 / 종료 ─────
     def run(self):
@@ -324,7 +308,9 @@ class DSM_Autonomous:
                 self.picam2.stop()
             except Exception as e:
                 print(f"⚠️ Error stopping camera: {e}")
-        self.release_video_writer()
+                
+        if self.outputmode == "video":
+            self.release_video_writer()
         GPIO.cleanup()
         print("🛑 DSM Autonomous Driving Stopped")
 
