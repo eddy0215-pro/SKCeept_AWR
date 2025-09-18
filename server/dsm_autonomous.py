@@ -19,6 +19,7 @@ class DSM_Autonomous:
         self.picam2 = Picamera2()
         camera_config = self.picam2.create_preview_configuration(main={"size": (320, 240)})
         self.picam2.configure(camera_config)
+        self.picam2.set_controls({"AwbEnable": True})
         self.picam2.start()
 
         # 실행 플래그
