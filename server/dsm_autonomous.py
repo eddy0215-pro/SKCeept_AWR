@@ -220,6 +220,7 @@ class DSM_Autonomous:
 
     # ───── 주행녹화 루프 ─────
     def camera_record_loop(self):
+        fb_path = "/dev/fb0"
         while self.running:
             frame = self.capture_frame()
 
@@ -242,15 +243,15 @@ class DSM_Autonomous:
                 x_offset = (fb_width - small_w) // 2
                 y_offset = (fb_height - small_h) // 2
 
-                try:
-                    with open("/dev/fb0", "r+b") as f:
-                        for row in range(small_h):
-                            offset = ((y_offset + row) * line_length) + (x_offset * bpp)
-                            f.seek(offset)
-                            f.write(frame_rgb565[row].tobytes())
-                except Exception as e:
-                    print(f"FB 출력 실패: {e}")
-
+                if os.path.exists(fb_path):
+                    try:
+                        with open(fb_path, "r+b") as f:
+                            for row in range(small_h):
+                                offset = ((y_offset + row) * line_length) + (x_offset * bpp)
+                                f.seek(offset)
+                                f.write(frame_rgb565[row].tobytes())
+                    except Exception as e:
+                        print(f"FB 출력 실패: {e}")
             time.sleep(1/30)  # 30fps 유지
 
     # ───── 모터 루프 ─────
@@ -275,10 +276,10 @@ class DSM_Autonomous:
             self.annotated_frame = final_frame
 
             # 객체 감지 → 보행자 멈춤
-            if "person" in detected:
-                print("👀 Person detected → stop 1s")
-                self.current_direction = "no"
-                continue
+            # if "person" in detected:
+            #     print("👀 Person detected → stop 1s")
+            #     self.current_direction = "no"
+            #     continue
 
             # 기본 주행: 전진
             lane_move = 'forward'
