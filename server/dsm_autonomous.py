@@ -111,13 +111,16 @@ class DSM_Autonomous:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         # 노란색 범위
-        lower_yellow = np.array([20, 100, 100])
-        upper_yellow = np.array([30, 255, 255])
+        # lower_yellow = np.array([20, 100, 100])
+        # upper_yellow = np.array([30, 255, 255])
+        lower_yellow = np.array([26, 140, 200])
+        upper_yellow = np.array([30, 210, 235])
         mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
         # ROI: 상단 절반 + 왼쪽 절반
         height, width = frame.shape[:2]
-        roi = mask[:int(height/2), :int(width/2)]
+        # roi = mask[:int(height/2), :int(width/2)]
+        roi = mask[:, :int(width/2)]
 
         # 모폴로지
         kernel = np.ones((5, 5), np.uint8)
