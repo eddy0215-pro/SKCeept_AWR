@@ -26,3 +26,6 @@ def checkdist():       #Reading distance
         pass
     t2 = time.time()
     return (t2-t1)*340/2
+
+if __name__ == '__main__':
+    print(checkdist())

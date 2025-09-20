@@ -12,7 +12,7 @@ def ap_thread():
         mac_suffix = "0000"  # 오류 시 기본값
 
     ssid_name = f"Groovy{mac_suffix}"
-    os.system(f"sudo create_ap --no-virt wlan0 eth0 {ssid_name} dsm12345")
+    os.system(f"sudo create_ap --no-virt -n wlan0 {ssid_name} dsm12345")
 
 # 간단 테스트
 if __name__ == '__main__':

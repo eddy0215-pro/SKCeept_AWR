@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import os
 import datetime  # datetime 모듈 추가
+import ultra
 
 class DSM_Autonomous:
     def __init__(self, speed=40):
@@ -29,14 +30,14 @@ class DSM_Autonomous:
         self.speed = speed
 
         # 출력 모드 설정 ("fb", "video", "both")
-        self.outputmode = "fb"
+        self.outputmode = "video"
 
         # 초음파 핀
         self.Trig = 11
         self.Echo = 8
 
         # 출발 관련 설정
-        self.start_threshold = 30.0     # cm, 가림막 없으면 출발
+        self.start_threshold = 10.0     # cm, 가림막 없으면 출발
         self.stable_time = 3.0          # 3초 이상 안정적이면 출발
 
         # 기본 진행 방향
@@ -87,7 +88,7 @@ class DSM_Autonomous:
             return None
 
         # 2. BGRA → BGR
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
 
         # 3. 180도 회전
         frame = cv2.rotate(frame, cv2.ROTATE_180)
@@ -174,24 +175,7 @@ class DSM_Autonomous:
     # ───── 초음파 거리 ─────
     def read_distance(self):
         try:
-            GPIO.output(self.Trig, GPIO.LOW)
-            time.sleep(0.00005)
-            GPIO.output(self.Trig, GPIO.HIGH)
-            time.sleep(0.000015)
-            GPIO.output(self.Trig, GPIO.LOW)
-
-            timeout = time.time() + 0.02
-            while not GPIO.input(self.Echo):
-                if time.time() > timeout:
-                    return float('inf')
-            t1 = time.time()
-
-            timeout = time.time() + 0.02
-            while GPIO.input(self.Echo):
-                if time.time() > timeout:
-                    return float('inf')
-            t2 = time.time()
-            return (t2 - t1) * 34000 / 2
+            return ultra.checkdist()
         except:
             return float('inf')
 
@@ -202,7 +186,8 @@ class DSM_Autonomous:
         while self.running and not self.started:
             if not self.use_ultrasonic:
                 break
-            d = self.read_distance()
+            d = self.read_distance() * 100
+            print(d)
             if d != float('inf') and d > self.start_threshold:
                 if stable_start is None:
                     stable_start = time.time()
@@ -216,7 +201,7 @@ class DSM_Autonomous:
                     break
             else:
                 stable_start = None
-            time.sleep(0.1)
+            time.sleep(0.5)
 
     # ───── 주행녹화 루프 ─────
     def camera_record_loop(self):
