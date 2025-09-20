@@ -29,7 +29,7 @@ class DSM_Autonomous:
         self.speed = speed
 
         # 출력 모드 설정 ("fb", "video", "both")
-        self.outputmode = "fb"
+        self.outputmode = "video"
 
         # 초음파 핀
         self.Trig = 11
@@ -87,7 +87,7 @@ class DSM_Autonomous:
             return None
 
         # 2. BGRA → BGR
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
 
         # 3. 180도 회전
         frame = cv2.rotate(frame, cv2.ROTATE_180)
