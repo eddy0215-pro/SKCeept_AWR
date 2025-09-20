@@ -97,39 +97,49 @@ def motor_right(status, direction, speed):#Motor 1 positive and negative rotatio
 	return direction
 
 
-def move(speed, direction, turn, radius=0.6):   # 0 < radius <= 1  
-	#speed = 100
-	if direction == 'forward':
-		if turn == 'right':
-			motor_left(0, left_backward, int(speed*radius))
-			motor_right(1, right_forward, speed)
-		elif turn == 'left':
-			motor_left(1, left_forward, speed)
-			motor_right(0, right_backward, int(speed*radius))
-		else:
-			motor_left(1, left_forward, speed)
-			motor_right(1, right_forward, speed)
-	elif direction == 'backward':
-		if turn == 'right':
-			motor_left(0, left_forward, int(speed*radius))
-			motor_right(1, right_backward, speed)
-		elif turn == 'left':
-			motor_left(1, left_backward, speed)
-			motor_right(0, right_forward, int(speed*radius))
-		else:
-			motor_left(1, left_backward, speed)
-			motor_right(1, right_backward, speed)
-	elif direction == 'no':
-		if turn == 'right':
-			motor_left(1, left_backward, speed)
-			motor_right(1, right_forward, speed)
-		elif turn == 'left':
-			motor_left(1, left_forward, speed)
-			motor_right(1, right_backward, speed)
-		else:
-			motorStop()
-	else:
-		pass
+def move(speed, direction, turn, radius=0.6):
+    speed = abs(speed)  # 안전하게
+
+    if direction == 'forward':
+        if turn == 'right':
+            # 제자리 우회전: 왼쪽 후진, 오른쪽 전진
+            motor_left(1, left_backward, speed)
+            motor_right(1, right_forward, speed)
+        elif turn == 'left':
+            # 제자리 좌회전: 왼쪽 전진, 오른쪽 후진
+            motor_left(1, left_forward, speed)
+            motor_right(1, right_backward, speed)
+        else:
+            # 직진
+            motor_left(1, left_forward, speed)
+            motor_right(1, right_forward, speed)
+
+    elif direction == 'backward':
+        if turn == 'right':
+            # 뒤로 우회전: 왼쪽 전진, 오른쪽 후진
+            motor_left(1, left_forward, speed)
+            motor_right(1, right_backward, speed)
+        elif turn == 'left':
+            # 뒤로 좌회전: 왼쪽 후진, 오른쪽 전진
+            motor_left(1, left_backward, speed)
+            motor_right(1, right_forward, speed)
+        else:
+            motor_left(1, left_backward, speed)
+            motor_right(1, right_backward, speed)
+
+    elif direction == 'no':
+        if turn == 'right':
+            # 제자리 회전
+            motor_left(1, left_backward, speed)
+            motor_right(1, right_forward, speed)
+        elif turn == 'left':
+            motor_left(1, left_forward, speed)
+            motor_right(1, right_backward, speed)
+        else:
+            motorStop()
+
+    else:
+        motorStop()
 
 
 
@@ -141,20 +151,13 @@ def destroy():
 
 if __name__ == '__main__':
 	try:
-		speed_set = 50
-		setup()
-		motor_left(1, 1, speed_set)
-		motor_right(1, 1, speed_set)
-		time.sleep(1)
-		motor_left(1, 0, speed_set)
-		motor_right(1, 0, speed_set)
-		time.sleep(1)
-		motor_left(1, 1, speed_set)
-		motor_right(1, 1, speed_set)
-		time.sleep(1)
-		motor_left(1, 0, speed_set)
-		motor_right(1, 0, speed_set)
-		time.sleep(1)
+		while 1 :
+			speed_set = 80
+			setup()
+			move(speed_set, "forward", "right", 1)
+			time.sleep(1)
+			move(speed_set, "forward", "left", 1)
+			time.sleep(1)
 	except KeyboardInterrupt:
 		destroy()
 
