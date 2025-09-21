@@ -203,54 +203,54 @@ class DSM_Autonomous:
             cx, mask, largest_contour = self.detect_yellow_lane_single_roi(frame)
             
             # 💡 하드 턴 상태 확인
-            if self.driving_state == 'performing_hard_turn':
-                self.handle_hard_turn()
+            # if self.driving_state == 'performing_hard_turn':
+            #     self.handle_hard_turn()
             
-            else: # 💡 일반 주행 모드
-                if cx != -1:
-                    frame_center = frame.shape[1] // 2
-                    offset = cx - frame_center
-                    
-                    with self.log_lock:
-                        self.avg_cx_value = cx
-                        self.offset_value = offset
+            # else: # 💡 일반 주행 모드
+            if cx != -1:
+                frame_center = frame.shape[1] // 2
+                offset = cx - frame_center
+                
+                with self.log_lock:
+                    self.avg_cx_value = cx
+                    self.offset_value = offset
 
-                    # 💡 하드 우회전 조건 확인
-                    if offset < self.hard_turn_threshold:
-                        self.right_turn_counter += 1
-                        print(f"⚠️ 하드 우회전 감지. 카운터: {self.right_turn_counter}")
-                        if self.right_turn_counter >= self.hard_turn_frame_limit:
-                            print(f"🔄 연속 하드 우회전({self.right_turn_counter} 프레임) 감지, 하드 턴 시작!")
-                            move.motorStop()
-                            self.driving_state = 'performing_hard_turn'
-                            self.turn_start_time = time.time()
-                            self.right_turn_counter = 0
-                            continue # 다음 프레임으로 바로 넘어가서 하드 턴 실행
-
-                    else:
+                # 💡 하드 우회전 조건 확인
+                if offset < self.hard_turn_threshold:
+                    self.right_turn_counter += 1
+                    print(f"⚠️ 하드 우회전 감지. 카운터: {self.right_turn_counter}")
+                    if self.right_turn_counter >= self.hard_turn_frame_limit:
+                        print(f"🔄 연속 하드 우회전({self.right_turn_counter} 프레임) 감지, 하드 턴 시작!")
+                        move.motorStop()
+                        self.driving_state = 'performing_hard_turn'
+                        self.turn_start_time = time.time()
                         self.right_turn_counter = 0
+                        continue # 다음 프레임으로 바로 넘어가서 하드 턴 실행
 
-                    threshold = 30 
-                    if offset > threshold:
-                        print(f"⬅️ 좌회전 (offset {offset})")
-                        # move.set_individual_speeds(-self.speed, self.speed)
-                        move.move(self.speed,"forward","left")
-                        self.last_known_direction = 'left'
-                    elif offset < -threshold:
-                        print(f"➡️ 우회전 (offset {offset})")
-                        # move.set_individual_speeds(self.speed, -self.speed)
-                        move.move(self.speed,"forward","right")
-                        self.last_known_direction = 'right'
-                    else:
-                        print(f"✅ 직진 (offset {offset})")
-                        # move.set_individual_speeds(self.speed, self.speed)
-                        move.move(self.speed,"forward","no")
-                        self.last_known_direction = 'forward'
                 else:
-                    print("⚠️ 차선 미인식. 직진을 시도합니다.")
+                    self.right_turn_counter = 0
+
+                threshold = 30 
+                if offset > threshold:
+                    print(f"⬅️ 좌회전 (offset {offset})")
+                    # move.set_individual_speeds(-self.speed, self.speed)
+                    move.move(self.speed,"forward","left")
+                    self.last_known_direction = 'left'
+                elif offset < -threshold:
+                    print(f"➡️ 우회전 (offset {offset})")
+                    # move.set_individual_speeds(self.speed, -self.speed)
+                    move.move(self.speed,"forward","right")
+                    self.last_known_direction = 'right'
+                else:
+                    print(f"✅ 직진 (offset {offset})")
                     # move.set_individual_speeds(self.speed, self.speed)
                     move.move(self.speed,"forward","no")
                     self.last_known_direction = 'forward'
+            else:
+                print("⚠️ 차선 미인식. 직진을 시도합니다.")
+                # move.set_individual_speeds(self.speed, self.speed)
+                move.move(self.speed,"forward","no")
+                self.last_known_direction = 'forward'
                 
             self.annotated_frame = frame
             
@@ -311,5 +311,5 @@ class DSM_Autonomous:
         print("🛑 DSM Autonomous Driving Stopped")
 
 if __name__ == '__main__':
-    auto = DSM_Autonomous(speed=50)
+    auto = DSM_Autonomous(speed=60)
     auto.run()
