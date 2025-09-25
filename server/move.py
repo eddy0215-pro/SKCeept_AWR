@@ -83,7 +83,7 @@ def motor_right(status, direction, speed):
         GPIO.output(Motor_A_Pin2, GPIO.LOW)
         GPIO.output(Motor_A_EN, GPIO.LOW)
     else:
-        if direction == Dir_forward:
+        if direction != Dir_forward:
             GPIO.output(Motor_A_Pin1, GPIO.HIGH)
             GPIO.output(Motor_A_Pin2, GPIO.LOW)
             pwm_A.start(100)
@@ -141,10 +141,16 @@ if __name__ == '__main__':
     try:
         setup()
         while True:
-            speed_set = 80
-            move(speed_set, "forward", "right")
+            speed_set = 100
+            # move(speed_set, "forward", "none")
+            # time.sleep(1)
+            # move(speed_set, "backward", "none")
+            # time.sleep(1)
+            motor_left(1, 1, speed_set)
+            motor_right(1, 1, speed_set)
             time.sleep(1)
-            move(speed_set, "forward", "left")
+            motor_left(1, 0, speed_set)
+            motor_right(1, 0, speed_set)
             time.sleep(1)
     except KeyboardInterrupt:
         destroy()

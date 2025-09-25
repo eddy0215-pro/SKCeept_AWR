@@ -136,9 +136,14 @@ class DSM_Autonomous:
             time.sleep(1/30)
 
     def motor_loop(self):
+        prev_direction, prev_turn = None, None
+
         while self.running:
-            move.move(self.speed, self.current_direction, self.current_turn, 1)
-            time.sleep(0.05)
+            if (self.current_direction, self.current_turn) != (prev_direction, prev_turn):
+                move.move(self.speed, self.current_direction, self.current_turn, 1)
+                prev_direction, prev_turn = self.current_direction, self.current_turn
+
+            time.sleep(1/30)
 
     # ==================== 주행 루프 ====================
     def yolo_lane_loop(self):
@@ -156,22 +161,22 @@ class DSM_Autonomous:
             self.annotated_frame = final_frame
             
             if cx is None:
-                lane_move = 'forward'
+                # lane_move = 'forward'
                 print(f"\r[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚫 No lane detected, keep forward", flush=True)
             else:
                 height, width = frame.shape[:2]
                 center_offset = cx - (width / 2)
 
-                if center_offset < -5:
-                    lane_move = 'right'
-                elif center_offset > 5:
-                    lane_move = 'left'
-                else:
-                    lane_move = 'forward'
+                # if center_offset < -5:
+                #     lane_move = 'right'
+                # elif center_offset > 5:
+                #     lane_move = 'left'
+                # else:
+                #     lane_move = 'forward'
                 
                 print(f"Lane center x: {cx}, Offset: {center_offset}, Move: {lane_move}")
             
-            self.current_direction = lane_move
+            # self.current_direction = lane_move
             time.sleep(1/3)
 
     # ==================== 키보드 입력 제어 루프 ====================
@@ -191,27 +196,29 @@ class DSM_Autonomous:
     def manual_drive_loop(self):
         print("🚦 Starting keyboard-controlled driving loop...")
         print("Controls: w=forward, s=backward, a=left, d=right, q=quit")
-        
+
         last_input_time = time.time()
+        prev_direction, prev_turn = "no", "no"
 
         while self.running:
             key = self.getch_nonblock()
+            new_direction, new_turn = prev_direction, prev_turn
 
             if key == 'w':
                 print("w:forward")
-                self.current_direction, self.current_turn = "forward", "no"
+                new_direction, new_turn = "forward", "no"
                 last_input_time = time.time()
             elif key == 's':
                 print("s:backward")
-                self.current_direction, self.current_turn = "backward", "no"
+                new_direction, new_turn = "backward", "no"
                 last_input_time = time.time()
             elif key == 'a':
                 print("a:left")
-                self.current_direction, self.current_turn = "forward", "left"
+                new_direction, new_turn = "forward", "left"
                 last_input_time = time.time()
             elif key == 'd':
                 print("d:right")
-                self.current_direction, self.current_turn = "forward", "right"
+                new_direction, new_turn = "forward", "right"
                 last_input_time = time.time()
             elif key == 'q':
                 print("q:Quit")
@@ -221,9 +228,14 @@ class DSM_Autonomous:
 
             # 입력이 일정 시간 이상 없으면 멈춤
             if time.time() - last_input_time > 0.2:
-                self.current_direction, self.current_turn = "no", "no"
+                new_direction, new_turn = "no", "no"
 
-            time.sleep(0.005)  # 짧은 주기로 빠르게 체크
+            # 방향이 바뀔 때만 업데이트
+            if (new_direction, new_turn) != (prev_direction, prev_turn):
+                self.current_direction, self.current_turn = new_direction, new_turn
+                prev_direction, prev_turn = new_direction, new_turn
+
+            time.sleep(1/30)  # 짧은 주기로 빠르게 체크
 
     def run(self):
         print("🚗 DSM Autonomous Driving Initialized — starting driving loop")
@@ -256,5 +268,5 @@ class DSM_Autonomous:
         print("🛑 DSM Autonomous Driving Stopped")
 
 if __name__ == '__main__':
-    auto = DSM_Autonomous(speed=60)
+    auto = DSM_Autonomous()
     auto.run()
